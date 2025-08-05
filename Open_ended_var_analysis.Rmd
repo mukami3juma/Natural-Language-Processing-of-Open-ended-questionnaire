@@ -1,0 +1,1308 @@
+---
+title: "Departmental Survey Summary"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document:
+    keep_md: false
+---
+
+```{r setup, include=FALSE}
+# Global chunk options: hide code, warnings, and messages
+knitr::opts_chunk$set(
+  echo = FALSE,          # hides code
+  warning = FALSE,       # hides warnings
+  message = FALSE,       # hides messages
+  fig.width = 12,        # default plot width
+  fig.height = 8         # default plot height
+)
+
+```
+
+## 1. Read and Clean data
+```{r echo=FALSE}
+library(dplyr)    
+library(ggplot2)
+
+d <- read.csv("/Users/oidata/Documents/To macbook - Documents/Kilifi Rural Women Financial Inclusion(30th_Aug_2024)/DPIA/Data governance compliance Survey Responses.xlsx - Data collection questionnaire f.csv")
+
+# Fix column names
+names(d) <- gsub("\\.", " ", names(d)) # drops the full stops in column names
+names(d) <- sub("\\s+$", "", names(d)) # removes whitespaces
+
+library(carobiner)
+
+# Applies the function to all columns. Makes all column names have title case
+d[] <- lapply(d, function(col) fix_name(col, case = "title"))
+
+# d$County.Department <- tools::toTitleCase(tolower(d$County.Department))
+d$`County Department` <- ifelse(grepl("land",ignore.case = T,d$`County Department`),"Lands, Energy, Housing, Physical Planning & Urban Development",
+                              ifelse(grepl("financ",ignore.case = T,d$`County Department`),"Finance and Economic Planning",
+                                     ifelse(grepl("disast",ignore.case = T,d$`County Department`),"Special Programs & Disaster Management (Gender)",d$`County Department`)))
+
+# ----------------------------
+# STEP 2: Separate Question Types
+# ----------------------------
+d <- d[,5:ncol(d)]
+
+# Close-ended variables (categorical/ordinal responses)
+
+close_ended_vars <- c(
+  "To what extent are you aware of data protection principles set out under the Data Protection Act  2019",
+  "Has everyone in your department  been trained on data protection",
+  "Does your County have a data protection policy",
+  "Is the data protection policy part of employee human resource obligations",
+  "Does your County have a privacy notice",
+  "Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above",
+  "Does your County have a budget for a data governance programme",
+  "If your County has a budget for a data governance programme  how much is it in the current financial year",
+  "Is there a designated Data Protection Officer at your County",
+  "Are there different levels of access to personal data at your County",
+  "Is there a personal data complaints mechanism",
+  "How is data hosted at your County",
+  "Is data hosted by or on behalf of your County Secure",
+  "Do you carry out audits of third parties with whom you share data",
+  "Do you have a data retention policy",
+  "Is there a data breach response strategy in place",
+  "Are there data protection clauses in your contracts",
+  "Are there data protection clauses in your County s operational documents",
+  "On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance"
+)
+
+# Closed ended question dataframe
+closed <- d[, (names(d) %in% close_ended_vars)]
+
+# Keep all columns EXCEPT the ones in close_ended_vars
+open <- d[, !(names(d) %in% close_ended_vars)]
+open_ended_vars <- names(open)
+
+```
+
+
+## 2. What personal data do you process in your department
+
+```{r echo=FALSE}
+
+install.packages(c("tidytext", "dplyr", "tm", "topicmodels", "ggplot2", "textclean", "tidyr"))
+library(tidytext)
+library(dplyr)
+library(tm)
+library(topicmodels)
+library(ggplot2)
+library(textclean)
+library(tidyr)
+
+# Read the open variable data
+d <- open
+
+# Combine relevant free-text columns into one
+# Example: combining responses from one column into a single string
+combined_text <- paste(d$`What personal data do you process in your department`, collapse = " ")
+
+# Drop N/A in text analysis
+combined_text <- gsub("N/A","",combined_text)
+
+# ----------------------------
+# Clean Text with TM
+# ----------------------------
+
+text_corpus <- VCorpus(VectorSource(combined_text)) # turns the text into a format R can clean easily (called a corpus)
+
+text_corpus <- text_corpus %>%
+  tm_map(content_transformer(tolower)) %>%  # make everything lowercase
+  tm_map(removePunctuation) %>%             # remove punctuation
+  tm_map(removeNumbers) %>%                 # remove numbers
+  tm_map(removeWords, stopwords("en")) %>%  # remove common words like "the", "and", "of"
+  tm_map(stripWhitespace)                   # remove extra spaces
+
+# STEP 3: Convert to document-term matrix
+dtm <- DocumentTermMatrix(text_corpus)
+dtm <- removeSparseTerms(dtm, 0.98)  # remove rare terms
+
+# STEP 4: Run LDA topic modeling
+k <- 2  # number of themes to extract
+lda_model <- LDA(dtm, k = k, control = list(seed = 1234))
+
+# STEP 5: Get top terms per topic
+topics <- tidy(lda_model, matrix = "beta")
+top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# STEP 6: Visualize top terms in each theme
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Top Terms in Detected Themes (Topics)",
+       y = "Word Probability", x = NULL)
+
+# Create a simple summary table using data.frame
+topic_labels <- data.frame(
+  Topic = c("Topic 1", "Topic 2"),
+  Label = c("Administrative and Financial Data Handling",
+            "Employee Information and Personal Records"),
+  Core_Theme = c("Movement and storage of HR, finance, and demographic records",
+                 "Data on staff identities, personal info, and internal HR files")
+)
+
+print(topic_labels)
+
+```
+
+## 3. What personal sensitive data do you process in your department
+
+```{r echo=FALSE}
+
+# Combining responses from one column into a single string
+combined_text <- paste(d$`What personal sensitive data do you process in your department`, collapse = " ")
+
+# Drop N/A in text analysis
+combined_text <- gsub("N/A","",combined_text)
+
+# ----------------------------
+# Clean Text with TM
+# ----------------------------
+
+text_corpus <- VCorpus(VectorSource(combined_text)) # turns the text into a format R can clean easily (called a corpus)
+
+text_corpus <- text_corpus %>%
+  tm_map(content_transformer(tolower)) %>%  # make everything lowercase
+  tm_map(removePunctuation) %>%             # remove punctuation
+  tm_map(removeNumbers) %>%                 # remove numbers
+  tm_map(removeWords, stopwords("en")) %>%  # remove common words like "the", "and", "of"
+  tm_map(stripWhitespace)                   # remove extra spaces
+
+# STEP 3: Convert to document-term matrix
+dtm <- DocumentTermMatrix(text_corpus)
+dtm <- removeSparseTerms(dtm, 0.98)  # remove rare terms
+
+# STEP 4: Run LDA topic modeling
+k <- 2  # number of themes to extract
+lda_model <- LDA(dtm, k = k, method = "Gibbs", control = list(seed = 1234, burnin = 1000, iter = 3000))
+
+# STEP 5: Get top terms per topic
+topics <- tidy(lda_model, matrix = "beta")
+top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# STEP 6: Visualize top terms in each theme
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Top Terms in Detected Themes (Topics)",
+       y = "Word Probability", x = NULL)
+
+# Create a simple summary table using data.frame
+topic_labels <- data.frame(
+  Topic = c("Topic 1", "Topic 2"),
+  Label = c("Personal Identification, Health & Financial Records",
+            "Employee, HR & Administrative Documentation"))
+  
+print(topic_labels)
+# 
+# library(knitr)
+# 
+# kable(topic_labels, caption = "🏷️ Final Topic Labels Summary")
+# 
+# install.packages("gt")
+# library(gt)
+# 
+# topic_labels %>%
+#   gt() %>%
+#   tab_header(title = "🏷️ Final Topic Labels Summary")
+
+```
+
+## [4] "What laws provide a legal basis for your County to collect  process  store  and transmit personal data"                                                                                                                 
+
+```{r echo=FALSE}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+# 1. Load responses
+responses <- str_to_title(open$`What laws provide a legal basis for your County to collect  process  store  and transmit personal data`)
+
+# 2. # 2. Standardization function
+
+standardize_law <- function(x) {
+  x <- gsub("\\.", "", x)  # Escape dot, which is a regex wildcard
+  x <- gsub("The Kenyan Constitution 2010|Constitution 2010|Constitution Of Kenya", "Constitution of Kenya 2010", x, ignore.case = TRUE)
+  x <- gsub("Dpa 2019|Data Protection Act 2019,", "Data Protection Act 2019", x, ignore.case = TRUE)
+  x <- gsub("Office Of The County Attorney Act, 2020", "County Attorney Act 2020", x, ignore.case = TRUE)
+  x <- gsub("County Government Act Section 105" , "County Government Act", x, ignore.case = TRUE)
+  x <- gsub("Ppda 2015", "Public Procurement & Disposal Act (PPDA) 2015", x, ignore.case = TRUE)
+  str_trim(x)
+}
+
+# 3. Apply function on responses vector
+responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
+
+# 4. Wrap into a dataframe
+law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
+
+# 5. Remove NAs and unclear responses
+law_df <- law_df %>%
+  filter(!is.na(response)) %>%
+  filter(!str_detect(response, "N/A|Not Sure|No Law At The Moment"))
+
+# 6. Split responses into separate laws
+law_split <- law_df %>%
+  separate_rows(response, sep = ",| and | And ") %>%   # split by comma or 'and'
+  mutate(response = str_trim(response)) %>%            # remove extra whitespace
+  filter(response != "")                               # drop empty rows
+
+# 7. Count occurrences of each law
+law_counts <- law_split %>%
+  count(response, sort = TRUE)
+
+# 8. View final result
+law_counts
+
+# 9. Plot as bar chart
+ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Most Frequently Mentioned Legal Bases for Handling Personal Data",
+    x = "Law",
+    y = "Mentions"
+  ) +
+  theme_minimal()
+
+# Visuals per department
+
+# Step 1: Extract relevant columns and filter valid entries
+
+dd <- open %>%
+  select(department = `County Department`, law_raw = `What laws provide a legal basis for your County to collect  process  store  and transmit personal data`) %>%
+  filter(!is.na(law_raw), !str_detect(tolower(law_raw), "n/a|not sure|no law"))
+
+dd$law_raw <- str_to_title(dd$law_raw)
+
+standardize_law <- function(x) {
+  x <- gsub("\\.", "", x)  # Escape dot, which is a regex wildcard
+  x <- gsub("The Kenyan Constitution 2010|Constitution 2010|Constitution Of Kenya", "Constitution of Kenya 2010", x, ignore.case = TRUE)
+  x <- gsub("Dpa 2019|Data Protection Act 2019,", "Data Protection Act 2019", x, ignore.case = TRUE)
+  x <- gsub("Office Of The County Attorney Act, 2020", "County Attorney Act 2020", x, ignore.case = TRUE)
+  x <- gsub("County Government Act Section 105" , "County Government Act", x, ignore.case = TRUE)
+  x <- gsub("Ppda 2015", "Public Procurement & Disposal Act (PPDA) 2015", x, ignore.case = TRUE)
+  str_trim(x)
+}
+
+dd$law_raw <- sapply(dd$law_raw, standardize_law, USE.NAMES = FALSE)
+
+# Step 2: Combine all responses per department into a single string
+
+dept_combined <- dd %>%
+  group_by(department) %>%
+  summarise(all_laws = paste(law_raw, collapse = ", "))
+
+# 3. Split multiple laws into separate rows
+dd_long <- dept_combined %>%
+  separate_rows(all_laws, sep = ",| and | And ") %>%
+  mutate(all_laws = str_trim(all_laws)) %>%
+  filter(all_laws != "")
+
+law_counts_by_dept <- dd_long %>%
+  count(department, all_laws, sort = TRUE)
+
+law_counts_by_dept
+
+library(ggplot2)
+
+# Plot: Stacked Bar Chart of Laws per Department
+ggplot(law_counts_by_dept, aes(x = department, y = n, fill = all_laws)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Legal Bases for Personal Data Processing by Department",
+    x = "County Department",
+    y = "Mentions of Legal Basis",
+    fill = "Law"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
+
+
+```
+
+
+
+## [5] "Who makes decisions on data collection  processing  storage  and transmission"
+
+
+```{r}
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(tidytext)
+library(textstem)
+library(ggplot2)
+
+# 1. Load responses
+responses <- str_to_title(open$`Who makes decisions on data collection  processing  storage  and transmission`)
+
+# 2. # 2. Standardization function
+standardize_law <- function(x) {
+  x <- gsub("\\/", " or ", x)  # Escape front slash, which is a regex wildcard
+  x <- gsub("Any Person Who Intends To Collect Data", "Enumerators", x, ignore.case = TRUE)
+  x <- gsub("Hr","Human Resource Officer", x, ignore.case = TRUE)
+  x <- gsub("Chief Officers|Chief Officer - Economic Planning", "Chief Officer", x, ignore.case = TRUE)
+  x <- gsub("Accounting Officers" , "Accounting Officer", x, ignore.case = TRUE)
+  str_trim(x)
+}
+
+# 3. Apply function on responses vector
+responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
+
+# 4. Wrap into a dataframe
+law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
+
+# 5. Remove NAs and unclear responses
+law_df <- law_df %>%
+  filter(!is.na(response)) %>%
+  filter(!str_detect(response, "None"))
+
+# 6. Split responses into separate laws
+law_split <- law_df %>%
+  separate_rows(response, sep = ",|or ") %>%   # split by comma or 'and'
+  mutate(response = str_trim(response)) %>%            # remove extra whitespace
+  filter(response != "")                               # drop empty rows
+
+# 7. Count occurrences of each law
+law_counts <- law_split %>%
+  count(response, sort = TRUE)
+
+# 8. View final result
+law_counts
+
+# 9. Plot as bar chart
+ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Most Frequently Mentioned Decision Makers for Handling Personal Data",
+    x = "Decision Makers",
+    y = "Mentions"
+  ) +
+  theme_minimal()
+
+#### Visuals per department
+
+# Step 1: Extract relevant columns and filter valid entries
+
+dd <- open %>%
+  select(department = `County Department`, decisionmaker = `Who makes decisions on data collection  processing  storage  and transmission`) %>%
+  filter(!is.na(decisionmaker), !str_detect(tolower(decisionmaker), "none"))
+
+dd$decisionmaker <- str_to_title(dd$decisionmaker)
+
+dd$decisionmaker <- sapply(dd$decisionmaker, standardize_law, USE.NAMES = FALSE)
+
+# Step 2: Combine all responses per department into a single string
+
+dept_combined <- dd %>%
+  group_by(department) %>%
+  summarise(decisionmakers = paste(decisionmaker, collapse = ", "))
+
+# 3. Split multiple laws into separate rows
+dd_long <- dept_combined %>%
+  separate_rows(decisionmakers, sep = ",|or ") %>%
+  mutate(decisionmakers = str_trim(decisionmakers)) %>%
+  filter(decisionmakers != "")
+
+law_counts_by_dept <- dd_long %>%
+  count(department, decisionmakers, sort = TRUE)
+
+law_counts_by_dept
+
+# Plot: Stacked Bar Chart of Laws per Department
+ggplot(law_counts_by_dept, aes(x = department, y = n, fill = decisionmakers)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Decision makers on data collection ,processing ,storage and transmission",
+    x = "County Department",
+    y = "Mentions of Decision maker",
+    fill = "Decision Makers"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
+```
+
+
+## [6] "How do you inform data subjects  either county residents  employees  contractors or other  on your collection  processing  storage  or transmission of their data"  
+
+```{r echo=FALSE}
+
+# Combining responses from one column into a single string
+combined_text <- paste(d$`How do you inform data subjects  either county residents  employees  contractors or other  on your collection  processing  storage  or transmission of their data`, collapse = " ")
+
+# Drop N/A in text analysis
+combined_text <- gsub("N/A","",combined_text)
+
+# ----------------------------
+# Clean Text with TM
+# ----------------------------
+
+text_corpus <- VCorpus(VectorSource(combined_text)) # turns the text into a format R can clean easily (called a corpus)
+
+text_corpus <- text_corpus %>%
+  tm_map(content_transformer(tolower)) %>%  # make everything lowercase
+  tm_map(removePunctuation) %>%             # remove punctuation
+  tm_map(removeNumbers) %>%                 # remove numbers
+  tm_map(removeWords, stopwords("en")) %>%  # remove common words like "the", "and", "of"
+  tm_map(stripWhitespace)                   # remove extra spaces
+
+# STEP 3: Convert to document-term matrix
+dtm <- DocumentTermMatrix(text_corpus)
+dtm <- removeSparseTerms(dtm, 0.98)  # remove rare terms
+
+# STEP 4: Run LDA topic modeling
+k <- 2  # number of themes to extract
+lda_model <- LDA(dtm, k = k, control = list(seed = 1234))
+
+# STEP 5: Get top terms per topic
+topics <- tidy(lda_model, matrix = "beta")
+top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# STEP 6: Visualize top terms in each theme
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Top Terms in Detected Themes (Topics)",
+       y = "Word Probability", x = NULL)
+
+# Load necessary packages
+library(tibble)
+library(gt)  # install.packages("gt") if not installed
+
+# Create summary of themes
+summary_themes <- tibble::tibble(
+  Topic = c("1", "2"),
+  Theme = c(
+    "Public Participation & Traditional Channels",
+    "Formal Internal & Written Communication"
+  ),
+  `Communication Approach` = c(
+    "Barazas, radio, calls, emails, public forums",
+    "Letters, departmental memos, confidentiality"
+  )
+)
+
+# Print the tibble
+print(summary_themes)
+
+```
+
+### Summary
+#### Public Participation & Traditional Communication Channels
+
+
+ - This topic suggests that some departments rely on public forums (barazas), community outreach (radio, public participation), and direct communication (phone calls, emails, correspondence) to inform citizens. These methods are more inclusive and accessible, especially in rural or low-digital-access areas.
+
+#### Formal Written & Departmental Communication
+
+ - This topic emphasizes written communication (letters, mails, correspondence), internal awareness (divisional, departmental), and concepts of confidentiality, consent and enlightenment. It suggests a more structured and perhaps internal-focused approach to data subject communication.
+
+ - These themes reflect a dual strategy by reaching citizens via community engagement tools and internal stakeholders (employees, contractors) through formal notices and memos.
+ 
+ 
+### [7] "What are the primary data collection methods at your County"                                                                                                                                                            
+
+```{r echo=FALSE}
+
+# 1. Load responses
+responses <- str_to_title(open$`What are the primary data collection methods at your County`)
+
+# 2. Standardization function
+
+standardize_law <- function(x) {
+  x <- gsub("\\/|\\#|\\?|\\*|\\.", "", x)
+  x <- gsub("Questionare|Questionnaire|Questionares|Questionnaires", "Questionnaires", ignore.case = TRUE, x)
+  x <- gsub("Discussion|Discussions","Discussions",ignore.case = TRUE,x)
+  x <- gsub("focused","Focus",ignore.case = TRUE, x)
+  x <- gsub("and",",",ignore.case = TRUE,x)
+  x <- gsub("\\s*,\\s*|,\\s*", ",", x)
+  str_trim(x)
+}
+
+# 3. Apply function on responses vector
+library(stringr)
+
+clean_responses <- function(responses) {
+  responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
+  
+  # Manual corrections
+  responses_cleaned[1]  <- NA
+  responses_cleaned[2]  <- "Questionnaires,Observation,Interviews"
+  responses_cleaned[3]  <- "Questionnaires,Interviews"
+  responses_cleaned[6]  <- "Questionnaires,Interviews"
+  responses_cleaned[8]  <- "Questionnaires,Surveys,Consultative Meetings,Focus Group Discussions"
+  responses_cleaned[15] <- "Surveys,Surveys"
+  
+  # Trim whitespace
+  responses_cleaned <- str_trim(responses_cleaned)
+  
+  return(responses_cleaned)
+}
+
+# 4. Wrap into a dataframe
+law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
+
+# 5. Remove NAs and unclear responses
+law_df <- law_df %>%
+  filter(!is.na(responses_cleaned))
+
+# 6. Split responses into separate laws
+law_split <- law_df %>%
+  separate_rows(response, sep = ",") %>%        # split by comma
+  mutate(response = str_trim(response)) %>%     # remove extra whitespace
+  filter(response != "")                        # drop empty rows
+
+# 7. Count occurrences of each primary data collection method
+law_counts <- law_split %>%
+  count(response, sort = TRUE)
+
+# 8. View final result
+law_counts
+
+# 9. Plot as bar chart
+ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Most Frequently Mentioned Data collection methods",
+    x = "Method type",
+    y = "Mentions"
+  ) +
+  theme_minimal()
+
+#### Visuals per department
+
+# Step 1: Extract relevant columns and filter valid entries
+
+dd <- open %>%
+  select(department = `County Department`, method = `What are the primary data collection methods at your County`) %>%
+  filter(!is.na(method), !str_detect(tolower(method), "none"))
+
+dd$method <- str_to_title(dd$method)
+
+dd$method <- sapply(dd$method, standardize_law, USE.NAMES = FALSE)
+dd$method[1] <- NA
+dd$method[2] <- "Questionnaires, Observation, Interviews"
+dd$method[3] <- "Questionnaires,Interviews"
+
+dept_combined <- dd %>%
+  group_by(department) %>%
+  summarise(method = paste(method, collapse = ", "))
+
+# 3. Split multiple laws into separate rows
+dd_long <- dept_combined %>%
+  separate_rows(method, sep = ",") %>%
+  mutate(method = str_trim(method)) %>%
+  filter(method != "")
+
+law_counts_by_dept <- dd_long %>%
+  count(department, method, sort = TRUE)
+
+law_counts_by_dept
+
+# Plot: Stacked Bar Chart of Laws per Department
+ggplot(law_counts_by_dept, aes(x = department, y = n, fill = method)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Primary data collection methods",
+    x = "County Department",
+    y = "Method type",
+    fill = "Method type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
+
+```
+
+###  [8] "What are the primary data storage methods at your County"                                                                                                                                                               
+
+```{r echo=FALSE}
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`, y = proportion, fill = `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+###  [9] "What are the uses of data at your County"                                                                                                                                                                               
+
+```{r echo=FALSE}
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Does your County have a budget for a data governance programme`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Does your County have a budget for a data governance programme`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Does your County have a budget for a data governance programme") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Does your County have a budget for a data governance programme`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Does your County have a budget for a data governance programme`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Does your County have a budget for a data governance programme`, y = proportion, fill = `Does your County have a budget for a data governance programme`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+
+### 8. If your County has a budget for a data governance programme  how much is it in the current financial year                                         
+                                                            
+```{r echo=FALSE}
+
+# drop NA and Nil entries
+unique(d$`If your County has a budget for a data governance programme  how much is it in the current financial year`)
+
+d$`If your County has a budget for a data governance programme  how much is it in the current financial year` <- 
+  ifelse(d$`If your County has a budget for a data governance programme  how much is it in the current financial year` %in% c("N/a","Nil"), NA,
+         ifelse(d$`If your County has a budget for a data governance programme  how much is it in the current financial year` == "I Don't Know", "Not Sure",d$`If your County has a budget for a data governance programme  how much is it in the current financial year`))
+
+unique(d$`If your County has a budget for a data governance programme  how much is it in the current financial year`)
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `If your County has a budget for a data governance programme  how much is it in the current financial year`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `If your County has a budget for a data governance programme  how much is it in the current financial year`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "If your County has a budget for a data governance programme  how much is it in the current financial year") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`If your County has a budget for a data governance programme  how much is it in the current financial year`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`If your County has a budget for a data governance programme  how much is it in the current financial year`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `If your County has a budget for a data governance programme  how much is it in the current financial year`, y = proportion, fill = `If your County has a budget for a data governance programme  how much is it in the current financial year`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 9. Is there a designated Data Protection Officer at your County                                        
+                                                            
+```{r echo=FALSE}
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Is there a designated Data Protection Officer at your County`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Is there a designated Data Protection Officer at your County`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Is there a designated Data Protection Officer at your County") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Is there a designated Data Protection Officer at your County`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Is there a designated Data Protection Officer at your County`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Is there a designated Data Protection Officer at your County`, y = proportion, fill = `Is there a designated Data Protection Officer at your County`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 10. [11] Are there different levels of access to personal data at your County                                                                                
+
+```{r echo=FALSE}
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Are there different levels of access to personal data at your County`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Are there different levels of access to personal data at your County`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Are there different levels of access to personal data at your County") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Are there different levels of access to personal data at your County`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Are there different levels of access to personal data at your County`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Are there different levels of access to personal data at your County`, y = proportion, fill = `Are there different levels of access to personal data at your County`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+
+### 11. [12] Is there a personal data complaints mechanism                                                                                                       
+
+```{r echo=FALSE}
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Is there a personal data complaints mechanism`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Is there a personal data complaints mechanism`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Is there a personal data complaints mechanism") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Is there a personal data complaints mechanism`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Is there a personal data complaints mechanism`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Is there a personal data complaints mechanism`, y = proportion, fill = `Is there a personal data complaints mechanism`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 12. [13] "How is data hosted at your County"                                                                                                                    
+
+```{r echo=FALSE}
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `How is data hosted at your County`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `How is data hosted at your County`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "How is data hosted at your County") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`How is data hosted at your County`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`How is data hosted at your County`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `How is data hosted at your County`, y = proportion, fill = `How is data hosted at your County`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+
+### 13. [14] "Is data hosted by or on behalf of your County Secure"                                                                                                 
+
+```{r echo=FALSE}
+
+unique(d$`Is data hosted by or on behalf of your County Secure`)
+
+d$`Is data hosted by or on behalf of your County Secure` <- ifelse(d$`Is data hosted by or on behalf of your County Secure` %in% c("Maybe","I Don't Know"),"Not Sure",d$`Is data hosted by or on behalf of your County Secure`)
+
+unique(d$`Is data hosted by or on behalf of your County Secure`)
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Is data hosted by or on behalf of your County Secure`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Is data hosted by or on behalf of your County Secure`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Is data hosted by or on behalf of your County Secure") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Is data hosted by or on behalf of your County Secure`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Is data hosted by or on behalf of your County Secure`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Is data hosted by or on behalf of your County Secure`, y = proportion, fill = `Is data hosted by or on behalf of your County Secure`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+
+### 14. [15] "Do you carry out audits of third parties with whom you share data"                                                                                    
+                                                                            
+```{r echo=FALSE}
+
+unique(d$`Do you carry out audits of third parties with whom you share data`)
+
+d$`Do you carry out audits of third parties with whom you share data` <- ifelse(d$`Do you carry out audits of third parties with whom you share data` %in% c("I Don't Know","Maybe"), "Not Sure",d$`Do you carry out audits of third parties with whom you share data`)
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Do you carry out audits of third parties with whom you share data`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Do you carry out audits of third parties with whom you share data`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Do you carry out audits of third parties with whom you share data") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Do you carry out audits of third parties with whom you share data`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Do you carry out audits of third parties with whom you share data`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Do you carry out audits of third parties with whom you share data`, y = proportion, fill = `Do you carry out audits of third parties with whom you share data`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 15. [16] "Do you have a data retention policy"                                                                                                                  
+                                                                            
+```{r echo=FALSE}
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Do you have a data retention policy`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Do you have a data retention policy`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Do you have a data retention policy") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Do you have a data retention policy`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Do you have a data retention policy`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Do you have a data retention policy`, y = proportion, fill = `Do you have a data retention policy`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 16. [17] "Is there a data breach response strategy in place"                                                                                                    
+                                                                                                        
+```{r echo=FALSE}
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Is there a data breach response strategy in place`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Is there a data breach response strategy in place`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Is there a data breach response strategy in place") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Is there a data breach response strategy in place`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Is there a data breach response strategy in place`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Is there a data breach response strategy in place`, y = proportion, fill = `Is there a data breach response strategy in place`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 17. [18] "Are there data protection clauses in your contracts"                                                                                                  
+                                                                                                    
+                                                                                                        
+```{r echo=FALSE}
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Are there data protection clauses in your contracts`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Are there data protection clauses in your contracts`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Are there data protection clauses in your contracts") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Are there data protection clauses in your contracts`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Are there data protection clauses in your contracts`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Are there data protection clauses in your contracts`, y = proportion, fill = `Are there data protection clauses in your contracts`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 18. [19] "Are there data protection clauses in your County s operational documents"
+                                                                                                    
+                                                                                                        
+```{r echo=FALSE}
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `Are there data protection clauses in your County s operational documents`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Are there data protection clauses in your County s operational documents`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Are there data protection clauses in your County s operational documents") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`Are there data protection clauses in your County s operational documents`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`Are there data protection clauses in your County s operational documents`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `Are there data protection clauses in your County s operational documents`, y = proportion, fill = `Are there data protection clauses in your County s operational documents`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+### 19. [20] "On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance"                 
+                                                                                                    
+```{r echo=FALSE}
+
+# Count feedback categories
+
+category_counts <- d %>%
+  group_by(`County Department`, `On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance`) %>%
+  summarise(total_responses = n()) %>%
+  mutate(proportion = total_responses / sum(total_responses))
+
+category_counts
+
+# Stacked bar chart for categorical feedback
+
+ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) + 
+  coord_flip()
+
+# contingency table to show feedback distribution per department 
+
+table(d$`County Department`,d$`On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance`)
+
+# % distribution of responses
+response <- d %>%
+  group_by(`On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance`) %>%
+  summarize(total_responses = n()) %>%
+  mutate(proportion = (total_responses / sum(total_responses))*100)
+
+response
+
+ggplot(response, aes(x = `On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance`, y = proportion, fill = `On a scale of 0 to 5  how do you rate your County s data governance compliance   zero being lowest and 5 highest level of compliance`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Response type proportion (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# # export the table to excel
+# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+```
+
+
+
+
+
+
+
+
+
