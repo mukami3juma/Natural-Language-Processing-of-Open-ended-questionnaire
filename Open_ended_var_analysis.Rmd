@@ -551,20 +551,20 @@ library(stringr)
 responses <- str_to_title(open$`What are the primary data collection methods at your County`)
 
 # 2. Standardization function
+
+standardize_law <- function(x) {
+  x <- gsub("\\/|\\#|\\?|\\*|\\.", "", x)
+  x <- gsub("Questionare|Questionnaire|Questionares|Questionnaires", "Questionnaires", ignore.case = TRUE, x)
+  x <- gsub("Discussion|Discussions","Discussions",ignore.case = TRUE,x)
+  x <- gsub("focused","Focus",ignore.case = TRUE, x)
+  x <- gsub("and",",",ignore.case = TRUE,x)
+  x <- gsub("\\s*,\\s*|,\\s*", ",", x)
+  str_trim(x)
+}
+
+# 3. Apply function on responses vector
+
 clean_responses <- function(responses) {
-  
-  standardize_law <- function(x) {
-    if (is.na(x)) return(NA_character_)
-    
-    x <- str_remove_all(x, "[[:punct:]]")  # Remove all punctuation
-    x <- gsub("Questionare|Questionnaire|Questionares|Questionnaires", "Questionnaires", x, ignore.case = TRUE)
-    x <- gsub("Discussion|Discussions", "Discussions", x, ignore.case = TRUE)
-    x <- gsub("focused", "Focus", x, ignore.case = TRUE)
-    x <- gsub("\\band\\b", ",", x, ignore.case = TRUE)  # Only replace "and" as a word
-    x <- gsub("\\s*,\\s*|,\\s*", ",", x)
-    str_trim(x)
-  }
-  
   responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
   
   # Manual corrections
@@ -575,6 +575,7 @@ clean_responses <- function(responses) {
   responses_cleaned[8]  <- "Questionnaires,Surveys,Consultative Meetings,Focus Group Discussions"
   responses_cleaned[15] <- "Surveys,Surveys"
   
+  # Trim whitespace
   responses_cleaned <- str_trim(responses_cleaned)
   
   return(responses_cleaned)
@@ -614,13 +615,13 @@ ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
 #### Visuals per department
 
 # Step 1: Extract relevant columns and filter valid entries
-
 dd <- open %>%
-  select(department = `County Department`, method = `What are the primary data collection methods at your County`) %>%
-  filter(!is.na(method)) %>%
-  mutate(method = str_to_title(method))
+  select(
+    department = `County Department`,method = `What are the primary data collection methods at your County`) %>%
+  filter(!is.na(method)) %>%               # Filter out NA values
+  mutate(method = str_to_title(method))    # Clean method column
 
-clean_responses(dd$method)
+dd$method <- clean_responses(dd$method)
 
 dept_combined <- dd %>%
   group_by(department) %>%
@@ -643,7 +644,7 @@ ggplot(law_counts_by_dept, aes(x = department, y = n, fill = method)) +
   labs(
     title = "Primary data collection methods",
     x = "County Department",
-    y = "Method type",
+    y = "Mentions",
     fill = "Method type"
   ) +
   theme_minimal() +
