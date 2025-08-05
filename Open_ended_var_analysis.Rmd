@@ -623,6 +623,10 @@ dd <- open %>%
 
 dd$method <- clean_responses(dd$method)
 
+dd <- dd %>%
+  filter(!is.na(method)) %>%
+  filter(method != "Not Sure")
+
 dept_combined <- dd %>%
   group_by(department) %>%
   summarise(method = paste(method, collapse = ", "))
