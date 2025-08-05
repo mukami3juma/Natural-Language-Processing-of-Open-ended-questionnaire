@@ -545,6 +545,8 @@ print(summary_themes)
 
 ```{r echo=FALSE}
 
+library(stringr)
+
 # 1. Load responses
 responses <- str_to_title(open$`What are the primary data collection methods at your County`)
 
@@ -561,7 +563,6 @@ standardize_law <- function(x) {
 }
 
 # 3. Apply function on responses vector
-library(stringr)
 
 clean_responses <- function(responses) {
   responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
@@ -617,14 +618,10 @@ ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
 
 dd <- open %>%
   select(department = `County Department`, method = `What are the primary data collection methods at your County`) %>%
-  filter(!is.na(method), !str_detect(tolower(method), "none"))
+  filter(!is.na(method)) %>%
+  mutate(method = str_to_title(method))
 
-dd$method <- str_to_title(dd$method)
-
-dd$method <- sapply(dd$method, standardize_law, USE.NAMES = FALSE)
-dd$method[1] <- NA
-dd$method[2] <- "Questionnaires, Observation, Interviews"
-dd$method[3] <- "Questionnaires,Interviews"
+clean_responses(dd$method)
 
 dept_combined <- dd %>%
   group_by(department) %>%
