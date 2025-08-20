@@ -84,7 +84,7 @@ open_ended_vars <- names(open)
 
 ```{r echo=FALSE}
 
-install.packages(c("tidytext", "dplyr", "tm", "topicmodels", "ggplot2", "textclean", "tidyr"))
+#install.packages(c("tidytext", "dplyr", "tm", "topicmodels", "ggplot2", "textclean", "tidyr"))
 library(tidytext)
 library(dplyr)
 library(tm)
@@ -247,9 +247,30 @@ standardize_law <- function(x) {
   x <- gsub("Dpa 2019|Data Protection Act 2019,", "Data Protection Act 2019", x, ignore.case = TRUE)
   x <- gsub("Office Of The County Attorney Act, 2020", "County Attorney Act 2020", x, ignore.case = TRUE)
   x <- gsub("County Government Act Section 105" , "County Government Act", x, ignore.case = TRUE)
-  x <- gsub("Ppda 2015", "Public Procurement & Disposal Act (PPDA) 2015", x, ignore.case = TRUE)
+  x <- gsub("Ppda 2015","Public Procurement & Disposal Act (PPDA) 2015", x, ignore.case = TRUE)
+  x <- gsub("and",",",x,ignore.case = TRUE)
   str_trim(x)
 }
+
+# library(stringr)
+# 
+# standardize_law <- function(x) {
+#   # Keep NA as NA
+#   x <- ifelse(x == "N/a", NA_character_, x)
+#   # Remove literal dots
+#   x <- str_replace_all(x, fixed(".|,"), "")
+#   x <- str_replace_all(x,"and", ",")
+#   # If it mentions "Constitution", force to canonical label
+#   x <- ifelse(str_detect(x, regex("Constitution", ignore_case = TRUE)),"Constitution of Kenya 2010", x)
+#   # Other standardizations
+#   x <- ifelse(str_detect(x, regex("DPA|data protection", ignore_case = TRUE)),"Data Protection Act 2019", x)
+#   x <- ifelse(str_detect(x, regex("county government", ignore_case = TRUE)),"County Government Act", x)
+#   x <- ifelse(str_detect(x, regex("county attorney", ignore_case = TRUE)),"County Attorney Act 2020", x)
+#   x <- ifelse(str_detect(x, regex("Ppda", ignore_case = TRUE)),"Public Procurement & Disposal Act (PPDA) 2015",x)
+# 
+#   str_trim(x)
+# }
+# responses_cleaned <- standardize_law(responses)
 
 # 3. Apply function on responses vector
 responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
@@ -258,13 +279,13 @@ responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
 law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
 
 # 5. Remove NAs and unclear responses
-law_df <- law_df %>%
+law_df2 <- law_df %>%
   filter(!is.na(response)) %>%
   filter(!str_detect(response, "N/A|Not Sure|No Law At The Moment"))
 
 # 6. Split responses into separate laws
-law_split <- law_df %>%
-  separate_rows(response, sep = ",| and | And ") %>%   # split by comma or 'and'
+law_split <- law_df2 %>%
+  separate_rows(response, sep = ",") %>%   # split by comma or 'and'
   mutate(response = str_trim(response)) %>%            # remove extra whitespace
   filter(response != "")                               # drop empty rows
 
@@ -291,39 +312,42 @@ ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
 # Step 1: Extract relevant columns and filter valid entries
 
 dd <- open %>%
-  select(department = `County Department`, law_raw = `What laws provide a legal basis for your County to collect  process  store  and transmit personal data`) %>%
-  filter(!is.na(law_raw), !str_detect(tolower(law_raw), "n/a|not sure|no law"))
+  select(department = `County Department`)
 
-dd$law_raw <- str_to_title(dd$law_raw)
-
-standardize_law <- function(x) {
-  x <- gsub("\\.", "", x)  # Escape dot, which is a regex wildcard
-  x <- gsub("The Kenyan Constitution 2010|Constitution 2010|Constitution Of Kenya", "Constitution of Kenya 2010", x, ignore.case = TRUE)
-  x <- gsub("Dpa 2019|Data Protection Act 2019,", "Data Protection Act 2019", x, ignore.case = TRUE)
-  x <- gsub("Office Of The County Attorney Act, 2020", "County Attorney Act 2020", x, ignore.case = TRUE)
-  x <- gsub("County Government Act Section 105" , "County Government Act", x, ignore.case = TRUE)
-  x <- gsub("Ppda 2015", "Public Procurement & Disposal Act (PPDA) 2015", x, ignore.case = TRUE)
-  str_trim(x)
-}
-
-dd$law_raw <- sapply(dd$law_raw, standardize_law, USE.NAMES = FALSE)
+dd <- cbind(dd,law_df)
 
 # Step 2: Combine all responses per department into a single string
 
 dept_combined <- dd %>%
   group_by(department) %>%
-  summarise(all_laws = paste(law_raw, collapse = ", "))
+  summarise(all_laws = paste(response, collapse = ", "))
 
 # 3. Split multiple laws into separate rows
 dd_long <- dept_combined %>%
-  separate_rows(all_laws, sep = ",| and | And ") %>%
+  separate_rows(all_laws, sep = ",") %>%
   mutate(all_laws = str_trim(all_laws)) %>%
+  filter(!str_detect(all_laws, "N/A|Not Sure|No Law At The Moment")) %>%
   filter(all_laws != "")
 
 law_counts_by_dept <- dd_long %>%
   count(department, all_laws, sort = TRUE)
 
-law_counts_by_dept
+df_prop <- law_counts_by_dept |>
+  group_by(department) |>
+  mutate(Prop = n / sum(n, na.rm = TRUE)) |>
+  ungroup()
+
+p_norm <- ggplot(df_prop, aes(x = department, y = Prop, fill = all_laws)) +
+  geom_col(width = 0.85, color = "grey20", linewidth = 0.2) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  coord_flip() +
+  labs(
+    title = "Method mix per department (normalized)",
+    x = NULL, y = "Share within department"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+p_norm
 
 library(ggplot2)
 
@@ -567,14 +591,14 @@ standardize_law <- function(x) {
 clean_responses <- function(responses) {
   responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
   
-  # Manual corrections
-  responses_cleaned[1]  <- NA
-  responses_cleaned[2]  <- "Questionnaires,Observation,Interviews"
-  responses_cleaned[3]  <- "Questionnaires,Interviews"
-  responses_cleaned[6]  <- "Questionnaires,Interviews"
-  responses_cleaned[8]  <- "Questionnaires,Surveys,Consultative Meetings,Focus Group Discussions"
-  responses_cleaned[15] <- "Surveys,Surveys"
-  
+  # # Manual corrections
+  # responses_cleaned[1]  <- NA
+  # responses_cleaned[2]  <- "Questionnaires,Observation,Interviews"
+  # responses_cleaned[3]  <- "Questionnaires,Interviews"
+  # responses_cleaned[6]  <- "Questionnaires,Interviews"
+  # responses_cleaned[8]  <- "Questionnaires,Surveys,Consultative Meetings,Focus Group Discussions"
+  # responses_cleaned[15] <- "Surveys,Surveys"
+
   # Trim whitespace
   responses_cleaned <- str_trim(responses_cleaned)
   
@@ -664,45 +688,120 @@ ggplot(law_counts_by_dept, aes(x = department, y = n, fill = method)) +
 
 ```{r echo=FALSE}
 
-# Count feedback categories
+# 1. Load responses
+responses <- str_to_title(open$`What are the primary data storage methods at your County`)
 
-category_counts <- d %>%
-  group_by(`County Department`, `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`) %>%
-  summarise(total_responses = n()) %>%
-  mutate(proportion = total_responses / sum(total_responses))
+# 2. Standardization function
 
-category_counts
+standardize_law <- function(x) {
+  x <- gsub("\\/|\\#|\\?|\\*|\\.", "", x)
+  x <- gsub("Filling|Filings|Files", "Filing", ignore.case = TRUE, x)
+  x <- gsub("Hard Discs|Hard-Drives|","Hard Drives",ignore.case = TRUE,x)
+  x <- gsub("Registry Filing","Registers",ignore.case = TRUE,x)
+  x <- gsub("Hard Copy","Physical",ignore.case = TRUE,x)
+  x <- gsub("Computer Storage Systems","Computers",x)
+  x <- gsub("and",",",ignore.case = TRUE,x)
+  x <- gsub("\\s*,\\s*|,\\s*", ",", x)
+  str_trim(x)
+}
 
-# Stacked bar chart for categorical feedback
+# 3. Apply function on responses vector
 
-ggplot(category_counts, aes(x = `County Department`, y = total_responses, fill = `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`)) +
+clean_responses <- function(responses) {
+  responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
+  
+  # Manual corrections
+  # responses_cleaned[1]  <- NA
+  # responses_cleaned[2]  <- "Questionnaires,Observation,Interviews"
+  # responses_cleaned[3]  <- "Questionnaires,Interviews"
+  # responses_cleaned[6]  <- "Questionnaires,Interviews"
+  # responses_cleaned[8]  <- "Questionnaires,Surveys,Consultative Meetings,Focus Group Discussions"
+  # responses_cleaned[15] <- "Surveys,Surveys"
+  # 
+  # Trim whitespace
+  responses_cleaned <- str_trim(responses_cleaned)
+  
+  return(responses_cleaned)
+}
+
+responses_cleaned <- clean_responses(responses)
+
+# 4. Wrap into a dataframe
+law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
+
+# 5. Remove NAs and unclear responses
+law_df <- law_df %>%
+  filter(!is.na(responses_cleaned))
+
+# 6. Split responses into separate laws
+law_split <- law_df %>%
+  separate_rows(response, sep = ",") %>%        # split by comma
+  mutate(response = str_trim(response)) %>%     # remove extra whitespace
+  filter(response != "")                        # drop empty rows
+
+# 7. Count occurrences of each primary data collection method
+law_counts <- law_split %>%
+  count(response, sort = TRUE)
+
+# 8. View final result
+law_counts
+
+# 9. Plot as bar chart
+ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Most Frequently Mentioned Data collection methods",
+    x = "Method type",
+    y = "Mentions"
+  ) +
+  theme_minimal()
+
+#### Visuals per department
+
+# Step 1: Extract relevant columns and filter valid entries
+dd <- open %>%
+  select(
+    department = `County Department`,method = `What are the primary data collection methods at your County`) %>%
+  filter(!is.na(method)) %>%               # Filter out NA values
+  mutate(method = str_to_title(method))    # Clean method column
+
+dd$method <- clean_responses(dd$method)
+
+dd <- dd %>%
+  filter(!is.na(method)) %>%
+  filter(method != "Not Sure")
+
+dept_combined <- dd %>%
+  group_by(department) %>%
+  summarise(method = paste(method, collapse = ", "))
+
+# 3. Split multiple laws into separate rows
+dd_long <- dept_combined %>%
+  separate_rows(method, sep = ",") %>%
+  mutate(method = str_trim(method)) %>%
+  filter(method != "")
+
+law_counts_by_dept <- dd_long %>%
+  count(department, method, sort = TRUE)
+
+law_counts_by_dept
+
+# Plot: Stacked Bar Chart of Laws per Department
+ggplot(law_counts_by_dept, aes(x = department, y = n, fill = method)) +
   geom_bar(stat = "identity") +
-  labs(title = "Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above") +
+  labs(
+    title = "Primary data collection methods",
+    x = "County Department",
+    y = "Mentions",
+    fill = "Method type"
+  ) +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-
-
-# contingency table to show feedback distribution per department 
-
-table(d$`County Department`,d$`Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`)
-
-# % distribution of responses
-response <- d %>%
-  group_by(`Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`) %>%
-  summarize(total_responses = n()) %>%
-  mutate(proportion = (total_responses / sum(total_responses))*100)
-
-response
-
-ggplot(response, aes(x = `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`, y = proportion, fill = `Are members of your department well versed with the county s data protection policy and privacy notice   Only answer if you answered yes to 4 6 above`)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Response type proportion (%)") +
-  theme_minimal() +
-  theme(legend.position = "none") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-
-# # export the table to excel
-# write.csv(f,file = "Feedback per Department of how aware people are of data protection principles")
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
 ```
 
 ###  [9] "What are the uses of data at your County"                                                                                                                                                                               
