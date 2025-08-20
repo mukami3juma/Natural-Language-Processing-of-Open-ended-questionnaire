@@ -252,26 +252,6 @@ standardize_law <- function(x) {
   str_trim(x)
 }
 
-# library(stringr)
-# 
-# standardize_law <- function(x) {
-#   # Keep NA as NA
-#   x <- ifelse(x == "N/a", NA_character_, x)
-#   # Remove literal dots
-#   x <- str_replace_all(x, fixed(".|,"), "")
-#   x <- str_replace_all(x,"and", ",")
-#   # If it mentions "Constitution", force to canonical label
-#   x <- ifelse(str_detect(x, regex("Constitution", ignore_case = TRUE)),"Constitution of Kenya 2010", x)
-#   # Other standardizations
-#   x <- ifelse(str_detect(x, regex("DPA|data protection", ignore_case = TRUE)),"Data Protection Act 2019", x)
-#   x <- ifelse(str_detect(x, regex("county government", ignore_case = TRUE)),"County Government Act", x)
-#   x <- ifelse(str_detect(x, regex("county attorney", ignore_case = TRUE)),"County Attorney Act 2020", x)
-#   x <- ifelse(str_detect(x, regex("Ppda", ignore_case = TRUE)),"Public Procurement & Disposal Act (PPDA) 2015",x)
-# 
-#   str_trim(x)
-# }
-# responses_cleaned <- standardize_law(responses)
-
 # 3. Apply function on responses vector
 responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
 
@@ -293,8 +273,8 @@ law_split <- law_df2 %>%
 law_counts <- law_split %>%
   count(response, sort = TRUE)
 
-# 8. View final result
-law_counts
+# # 8. View final result
+# law_counts
 
 # 9. Plot as bar chart
 ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
@@ -337,36 +317,20 @@ df_prop <- law_counts_by_dept |>
   mutate(Prop = n / sum(n, na.rm = TRUE)) |>
   ungroup()
 
-p_norm <- ggplot(df_prop, aes(x = department, y = Prop, fill = all_laws)) +
+library(scales)  # <— load this
+
+ggplot(df_prop, aes(x = department, y = Prop, fill = all_laws)) +
   geom_col(width = 0.85, color = "grey20", linewidth = 0.2) +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1)) +  # or percent_format()
   coord_flip() +
-  labs(
-    title = "Method mix per department (normalized)",
-    x = NULL, y = "Share within department"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "bottom")
-p_norm
-
-library(ggplot2)
-
-# Plot: Stacked Bar Chart of Laws per Department
-ggplot(law_counts_by_dept, aes(x = department, y = n, fill = all_laws)) +
-  geom_bar(stat = "identity") +
-  labs(
-    title = "Legal Bases for Personal Data Processing by Department",
+  labs(title = "Legal Bases for Personal Data Processing by Department",
     x = "County Department",
     y = "Mentions of Legal Basis",
     fill = "Law"
   ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    plot.title = element_text(face = "bold", size = 14),
-    legend.position = "bottom"
-  )
-
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+ 
 
 ```
 
@@ -374,23 +338,13 @@ ggplot(law_counts_by_dept, aes(x = department, y = n, fill = all_laws)) +
 
 ## [5] "Who makes decisions on data collection  processing  storage  and transmission"
 
-
 ```{r}
-
-# Load libraries
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(tidytext)
-library(textstem)
-library(ggplot2)
-
 # 1. Load responses
 responses <- str_to_title(open$`Who makes decisions on data collection  processing  storage  and transmission`)
 
-# 2. # 2. Standardization function
+# 2. Standardization function
 standardize_law <- function(x) {
-  x <- gsub("\\/", " or ", x)  # Escape front slash, which is a regex wildcard
+  x <- gsub("\\/|and",",",x,ignore.case = TRUE)
   x <- gsub("Any Person Who Intends To Collect Data", "Enumerators", x, ignore.case = TRUE)
   x <- gsub("Hr","Human Resource Officer", x, ignore.case = TRUE)
   x <- gsub("Chief Officers|Chief Officer - Economic Planning", "Chief Officer", x, ignore.case = TRUE)
@@ -405,13 +359,13 @@ responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
 law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
 
 # 5. Remove NAs and unclear responses
-law_df <- law_df %>%
+law_df2 <- law_df %>%
   filter(!is.na(response)) %>%
   filter(!str_detect(response, "None"))
 
 # 6. Split responses into separate laws
-law_split <- law_df %>%
-  separate_rows(response, sep = ",|or ") %>%   # split by comma or 'and'
+law_split <- law_df2 %>%
+  separate_rows(response, sep = ",") %>%   # split by comma or 'and'
   mutate(response = str_trim(response)) %>%            # remove extra whitespace
   filter(response != "")                               # drop empty rows
 
@@ -419,64 +373,61 @@ law_split <- law_df %>%
 law_counts <- law_split %>%
   count(response, sort = TRUE)
 
-# 8. View final result
-law_counts
+# # 8. View final result
+# law_counts
 
 # 9. Plot as bar chart
 ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
   geom_bar(stat = "identity", fill = "steelblue") +
   coord_flip() +
   labs(
-    title = "Most Frequently Mentioned Decision Makers for Handling Personal Data",
-    x = "Decision Makers",
+    title = "Who makes decisions on data collection, processing, storage and transmission",
+    x = "Decision Maker",
     y = "Mentions"
   ) +
   theme_minimal()
 
-#### Visuals per department
+#----------- Visuals per department---------------
 
 # Step 1: Extract relevant columns and filter valid entries
 
 dd <- open %>%
-  select(department = `County Department`, decisionmaker = `Who makes decisions on data collection  processing  storage  and transmission`) %>%
-  filter(!is.na(decisionmaker), !str_detect(tolower(decisionmaker), "none"))
+  select(department = `County Department`)
 
-dd$decisionmaker <- str_to_title(dd$decisionmaker)
-
-dd$decisionmaker <- sapply(dd$decisionmaker, standardize_law, USE.NAMES = FALSE)
+dd <- cbind(dd,law_df)
 
 # Step 2: Combine all responses per department into a single string
 
 dept_combined <- dd %>%
   group_by(department) %>%
-  summarise(decisionmakers = paste(decisionmaker, collapse = ", "))
+  summarise(all_laws = paste(response, collapse = ", "))
 
 # 3. Split multiple laws into separate rows
 dd_long <- dept_combined %>%
-  separate_rows(decisionmakers, sep = ",|or ") %>%
-  mutate(decisionmakers = str_trim(decisionmakers)) %>%
-  filter(decisionmakers != "")
+  separate_rows(all_laws, sep = ",") %>%
+  mutate(all_laws = str_trim(all_laws)) %>%
+  filter(!str_detect(all_laws, "None")) %>%
+  filter(all_laws != "")
 
 law_counts_by_dept <- dd_long %>%
-  count(department, decisionmakers, sort = TRUE)
+  count(department, all_laws, sort = TRUE)
 
-law_counts_by_dept
+df_prop <- law_counts_by_dept |>
+  group_by(department) |>
+  mutate(Prop = n / sum(n, na.rm = TRUE)) |>
+  ungroup()
 
-# Plot: Stacked Bar Chart of Laws per Department
-ggplot(law_counts_by_dept, aes(x = department, y = n, fill = decisionmakers)) +
-  geom_bar(stat = "identity") +
-  labs(
-    title = "Decision makers on data collection ,processing ,storage and transmission",
+ggplot(df_prop, aes(x = department, y = Prop, fill = all_laws)) +
+  geom_col(width = 0.85, color = "grey20", linewidth = 0.2) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1)) +  # or percent_format()
+  coord_flip() +
+  labs(title = "Who makes decisions on data collection, processing, storage and transmission",
     x = "County Department",
-    y = "Mentions of Decision maker",
-    fill = "Decision Makers"
+    y = "Mentions of Decision Maker",
+    fill = "Decision Maker"
   ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1),
-    plot.title = element_text(face = "bold", size = 14),
-    legend.position = "bottom"
-  )
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
 ```
 
 
