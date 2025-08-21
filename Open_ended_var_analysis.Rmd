@@ -520,22 +520,106 @@ print(summary_themes)
 
 ```{r echo=FALSE}
 
-library(stringr)
+# 1. Load responses
+responses <- str_to_title(open$`What are the primary data collection methods at your County`)
 
+# 2. Standardization function
+standardize_law <- function(x) {
+  x <- sub("\\s*", "", x)
+  x <- sub("\\s*\\.\\s*|,\\s*", ",", x)
+  x <- gsub("\\/|\\#|\\?|", "", x)
+  x <- gsub("Questionare|Questionnaire|Questionares|Questionnaires", "Questionnaires", ignore.case = TRUE, x)
+  x <- gsub("Discussion|Discussions","Discussions",ignore.case = TRUE,x)
+  x <- gsub("focused","Focus",ignore.case = TRUE, x)
+  x <- gsub("Oral Surveys|Online Surveys|Offline Surveys","Surveys",ignore.case = TRUE, x)
+  x <- gsub("and",",",ignore.case = TRUE,x)
+  x <- gsub("\\*", ",", x)
+  x <- gsub("\\s*,\\s*|,\\s*", ",", x)
+
+  str_trim(x)
+}
+# 3. Apply function on responses vector
+responses_cleaned <- sapply(responses, standardize_law, USE.NAMES = FALSE)
+
+# 4. Wrap into a dataframe
+law_df <- data.frame(response = responses_cleaned, stringsAsFactors = FALSE)
+
+# 5. Remove NAs and unclear responses
+law_df2 <- law_df %>%
+  filter(!is.na(response)) %>%
+  filter(!str_detect(response, "None"))
+
+# 6. Split responses into separate laws
+law_split <- law_df2 %>%
+  separate_rows(response, sep = ",") %>%   # split by comma or 'and'
+  mutate(response = str_trim(response)) %>%            # remove extra whitespace
+  filter(response != "")                               # drop empty rows
+
+# 7. Count occurrences of each law
+law_counts <- law_split %>%
+  count(response, sort = TRUE)
+
+# # 8. View final result
+# law_counts
+
+# 9. Plot as bar chart
+ggplot(law_counts, aes(x = reorder(response, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Who makes decisions on data collection, processing, storage and transmission",
+    x = "Decision Maker",
+    y = "Mentions"
+  ) +
+  theme_minimal()
+
+#----------- Visuals per department---------------
+
+# Step 1: Extract relevant columns and filter valid entries
+
+dd <- open %>%
+  select(department = `County Department`)
+
+dd <- cbind(dd,law_df)
+
+# Step 2: Combine all responses per department into a single string
+
+dept_combined <- dd %>%
+  group_by(department) %>%
+  summarise(all_laws = paste(response, collapse = ", "))
+
+# 3. Split multiple laws into separate rows
+dd_long <- dept_combined %>%
+  separate_rows(all_laws, sep = ",") %>%
+  mutate(all_laws = str_trim(all_laws)) %>%
+  filter(!str_detect(all_laws, "None")) %>%
+  filter(all_laws != "")
+
+law_counts_by_dept <- dd_long %>%
+  count(department, all_laws, sort = TRUE)
+
+df_prop <- law_counts_by_dept |>
+  group_by(department) |>
+  mutate(Prop = n / sum(n, na.rm = TRUE)) |>
+  ungroup()
+
+ggplot(df_prop, aes(x = department, y = Prop, fill = all_laws)) +
+  geom_col(width = 0.85, color = "grey20", linewidth = 0.2) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1)) +  # or percent_format()
+  coord_flip() +
+  labs(title = "Who makes decisions on data collection, processing, storage and transmission",
+    x = "County Department",
+    y = "Mentions of Decision Maker",
+    fill = "Decision Maker"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
 # 1. Load responses
 responses <- str_to_title(open$`What are the primary data collection methods at your County`)
 
 # 2. Standardization function
 
-standardize_law <- function(x) {
-  x <- gsub("\\/|\\#|\\?|\\*|\\.", "", x)
-  x <- gsub("Questionare|Questionnaire|Questionares|Questionnaires", "Questionnaires", ignore.case = TRUE, x)
-  x <- gsub("Discussion|Discussions","Discussions",ignore.case = TRUE,x)
-  x <- gsub("focused","Focus",ignore.case = TRUE, x)
-  x <- gsub("and",",",ignore.case = TRUE,x)
-  x <- gsub("\\s*,\\s*|,\\s*", ",", x)
-  str_trim(x)
-}
+
 
 # 3. Apply function on responses vector
 
